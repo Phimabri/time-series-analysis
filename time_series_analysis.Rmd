@@ -1,0 +1,385 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+### Import the libraries
+
+```         
+```
+
+```{r}
+require(zoo)
+require(tseries)
+library(tseries)
+install.packages("fUnitRoots")
+library(fUnitRoots)
+
+
+```
+
+### Import and plot the data
+
+```{r}
+path <- getwd()
+setwd(path)
+
+data_file <- "valeurs_mensuelles.csv"
+data <- read.csv(data_file,sep=";")
+
+data<- as.data.frame(data)
+
+#We delete the third column
+data <- data[-c(1,2,3), -3]
+data <- apply(data, 2, rev)
+
+#We rename the columns
+rownames(data) <- 1:dim(data)[1]
+colnames(data) <- c("date", "value")
+
+
+```
+
+## Part 1
+
+### Question 1
+
+```{r}
+time_serie <- ts(as.numeric(data[,2]), start=2002, frequency=12)
+
+print(length(time_serie))
+```
+
+```{r}
+plot(time_serie, xlab="date", ylab="value", main = "Time Series")
+monthplot(time_serie)
+```
+
+```         
+```
+
+The series appears to exhibit a negative linear trend but not particularly any seasonality.
+
+``` fkjsqvdlfb
+```
+
+```{r}
+lag.plot(time_serie, lags=12, layout=c(3,4), do.lines=FALSE)
+decomposed_st <- decompose(time_serie)
+plot(decomposed_st)
+```
+
+```         
+```
+
+The Lag plot allows us to detect the presence of a trend.
+
+```{r}
+#On plot les ACF et PACF pour mettre en évidence la présence/absence de saisonalité et de trend
+
+#On fait en sorte que l'axe des abscisses affiche une incrémentation de 1 par lag
+acf_result <- acf(time_serie, plot=FALSE)
+plot(acf_result, xaxt='n') 
+axis(1, at=seq(0, 20, by=1)) 
+
+pacf_result <- pacf(time_serie, plot=FALSE)
+plot(pacf_result, xaxt='n') 
+axis(1, at=seq(0, 20, by=1)) 
+
+
+```
+
+We observe that the significance of the autocorrelation decreases linearly with the lags and is very close to 1. This indicates the presence of a trend.
+
+However, the series does not seem to exhibit seasonality, as the PACF graph does not show any recurring significant values.
+
+### Regression of the series on its lags to approximate the coefficient associated with the linear trend.
+
+```{r}
+summary(lm(time_serie ~ seq(1,length(time_serie))))
+```
+
+It is observed that the coefficient associated with the linear trend is indeed negative as expected (-0.45). However, we cannot confirm its significance because the test is not valid in the presence of potentially autocorrelated residuals. Therefore, we will test whether the residuals are autocorrelated.
+
+### KPSS test 
+
+```{r}
+kpss.test(time_serie,null="Trend")
+```
+
+p-value \< 0.05, we can reject the null hypothesis that the series is stationary.
+
+### Autocorrelation test
+
+```{r}
+# ADF test
+
+
+# Function Q_tests for testing th autocorrelation of residuals
+Qtests <- function(series, k, fitdf=0) {
+  aux <- function(l){
+    pval <- if (l<=fitdf) NA else Box.test(series, lag=l, type="Ljung", fitdf=fitdf)$p.value
+    return (c("lag"=l, "pval"=pval))
+  } 
+  pvals <- apply(matrix(1:k), 1, FUN=aux)
+  return (t(pvals))
+}
+
+adfTest_valid <- function(series, kmax, type) {
+  k <- 0
+  noautocorr <- 0
+  while (noautocorr == 0){
+    cat(paste0("ADF with ", k, " lags: residuals OK?"))
+    adf <- adfTest(series, lags = k, type = type)
+    pvals <- Qtests(adf@test$lm$residuals, 24, fitdf = length(adf@test$lm$coefficients))[, 2]
+    if (sum(pvals < 0.05, na.rm = TRUE) == 0) {
+      noautocorr <- 1
+      cat("OK \n")
+    } else {
+      cat("nope \n")
+    }
+    k <- k + 1
+  }
+  return(adf)
+}
+
+adf <- adfTest_valid(time_serie, 24, "ct")
+adf
+```
+
+21 lags had to be considered in the ADF test to remove the autocorrelation of the residuals.
+
+Moreover, the hypothesis that there is a unit root is not rejected since the p-value is 0.407. Therefore, the series is at least I(1).
+
+# Question 2
+
+We will differenciate the series once to remove the trend.
+
+```{r}
+diff_time_serie = diff(time_serie)
+
+plot(diff_time_serie)
+```
+
+This series does not seem to exhibit any trend or seasonality.
+
+### ACF for the differenciated series
+
+```{r}
+acf(diff_time_serie,pl=TRUE)
+```
+
+### Summary of the differenciated series
+
+```{r}
+summary(lm(diff_time_serie ~ seq(1,length(diff_time_serie))))
+```
+
+### KPSS test for the differenciated series
+
+```{r}
+kpss.test(diff_time_serie, null="Trend")
+```
+
+This time, we cannot reject at the 5% level the hypothesis that the series is stationary.
+
+### Test ADF for the differenciated series
+
+```{r}
+adf<- adfTest_valid(diff_time_serie,24,"ct")
+adf
+```
+
+This time, the p-value is less than 0.05, so we can reject the null hypothesis that the series has a unit root.
+
+# Question 3
+
+Before- After treatment
+
+```{r}
+plot(cbind(time_serie,diff_time_serie))
+```
+
+# Question 4 : choice of the arma model
+
+```{r}
+acf(as.numeric(diff_time_serie))
+q <- 1
+```
+
+```{r}
+pacf(as.numeric(diff_time_serie))
+p<-3
+```
+
+Based on the graphs, we can choose p=3 and q=1, and thus initially select an ARMA(3,1) model.
+
+### **Calculation of the AIC and BIC matrices to determine if we can simplify the model**
+
+```{r}
+mat <- matrix (NA, nrow=p+1, ncol=q+1) # empty matrix 
+rownames(mat) <- paste0("p=",0:p) 
+colnames(mat) <- paste0("q=",0:q) 
+AICs <- mat # AIC matrix
+BICs <- mat # BIC matrix
+pqs <- expand.grid(0:p, 0:q)
+for (row in 1:dim(pqs)[1]){
+  p1 <- pqs[row, 1] 
+  q1 <- pqs[row, 2] 
+  estim <- try(arima(diff_time_serie, c(p1, 0, q1), include.mean = F)) # try to estimate the ARIMA
+  AICs[p1+1,q1+1] <- if (class(estim)=="try-error") NA else estim$aic
+  BICs[p1+1,q1+1] <- if (class(estim)=="try-error") NA else BIC(estim) 
+}
+
+
+```
+
+```{r}
+#  AICs
+AICs
+AICs==min(AICs)
+```
+
+```{r}
+
+# BICs
+BICs 
+BICs==min(BICs)
+```
+
+Both the BIC and AIC criteria suggest choosing an ARMA(0,1) model.
+
+### Estimation of the parameters
+
+```{r}
+arma01<- arima(diff_time_serie,c(0,0,1), include.mean=F)
+arma01
+```
+
+The ratio between the coefficient and its standard error is -10.4, which is less than -1.96, indicating that it is statistically significant.
+
+# Question 5 : use ARIMA model
+
+```{r}
+arima011 <- arima(time_serie,c(0,1,1),include.mean=F)
+arima011
+```
+
+We obtain the same values as in the previous question in a logical manner.
+
+```{r}
+adj_r2 <- function(model){
+  ss_res <- sum(model$residuals^2) # sum of squared residuals
+  p <- model$arma[1] 
+  q <- model$arma[2]
+  ss_tot <- sum(diff_time_serie[-c(1:max(p, q))]^2) 
+  n <- model$nobs-max(p, q) 
+  adj_r2 <- 1-(ss_res/(n-p-q-1)) / (ss_tot/(n-1)) #ajusted R square
+  return (adj_r2)
+}
+adj_r2(arma01)
+```
+
+### Then, we apply our models
+
+```{r}
+
+install.packages("forecast")
+
+# Charger la bibliothèque forecast pour la fonction auto.arima
+library(forecast)
+arima_model <- Arima(time_serie, order = c(0, 1, 1))
+
+fitted_values <- fitted(arima_model)
+
+plot(time_serie, type = "l", col = "blue", xlab = "Date", ylab = "Indice", main = "Observed vs Fitted")
+lines(fitted_values, col = "red")
+legend("topright", legend = c("Observed", "Fitted"), col = c("blue", "red"), lty = 1)
+
+
+
+```
+
+```{r}
+install.packages("forecast")
+
+# Charger la bibliothèque forecast pour la fonction auto.arima
+library(forecast)
+
+arma_model <- Arima(diff_time_serie, order = c(0, 0, 1))
+
+fitted_values <- fitted(arma_model)
+
+plot(diff_time_serie, type = "l", col = "blue", xlab = "Date", ylab = "Indice", main = "Observed vs Fitted")
+lines(fitted_values, col = "red")
+legend("topright", legend = c("Observed", "Fitted"), col = c("blue", "red"), lty = 1)
+
+```
+
+```{r}
+tsdiag(arma_model)
+jarque.bera.test(arma_model$residuals)
+qqnorm(arma_model$residuals)
+qqline(arma_model$residuals, col="red")
+plot(density(arma_model$residuals), xlim=c(-10, 10), main="Densité des résidus")
+mu <- mean(arma_model$residuals)
+sigma <- sd(arma_model$residuals)
+x <- seq(-10, 10)
+y <- dnorm(x, mu, sigma)
+lines(x, y, lwd=0.5, col='blue')
+```
+
+```{r}
+arma_model$coef
+phi_1 <- as.numeric(arma_model$coef[1])
+sigma2 <- as.numeric(arma_model$sigma)
+phi_1
+
+# Vérification des racines
+ar_coefs <- c(phi_1)
+ar_roots <- polyroot(c(1, -ar_coefs))
+abs(ar_roots)
+all(abs(ar_roots) > 1)
+
+```
+
+```{r}
+XT1 = predict(arma_model, n.ahead = 2)$pred[1]
+XT2 = predict(arma_model, n.ahead = 2)$pred[2]
+XT1
+XT2
+
+fore = forecast(arma_model, h=5, level=95)
+par(mfrow=c(1, 1))
+plot(fore, xlim = c(2002, 2024), col=1, fcol=2, shaded=TRUE, xlab="Temps", ylab="Valeurs", main ="Prévision de la série")
+```
+
+```{r}
+mean_vector <- c(XT1, XT2)
+cov_matrix <- matrix(c(sigma2, sigma2 * (-phi_1), sigma2 * (-phi_1), sigma2 * (1 + phi_1^2)), nrow=2)
+
+# Définir le niveau de confiance
+alpha <- 0.05
+
+# Calculer la valeur du chi-carré pour le niveau de confiance
+chi2_val <- qchisq(1 - alpha, df = 2)
+
+# Fonction pour générer les points de l'ellipse
+generate_ellipse <- function(center, cov_matrix, chi2_val, n_points = 100) {
+  angles <- seq(0, 2 * pi, length.out = n_points)
+  unit_circle <- cbind(cos(angles), sin(angles))
+  transform_matrix <- chol(cov_matrix)
+  ellipse_points <- t(center + sqrt(chi2_val) * t(unit_circle %*% transform_matrix))
+  return(ellipse_points)
+}
+
+# Générer les points de l'ellipse
+ellipse_points <- generate_ellipse(mean_vector, cov_matrix, chi2_val)
+
+# Tracer l'ellipse et les points
+plot(ellipse_points, type = 'l', xlab = expression(paste('Prédiction pour ', X[T+1])), ylab = expression(paste('Prédiction pour ', X[T+2])), main = "Région de confiance bivariée à 95%", col = 'red')
+points(mean_vector[1], mean_vector[2], pch = 19)
+abline(h = XT2, v = XT1, col = 'blue')
+abline(h = 0, v = 0)
+grid()
+```
