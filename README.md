@@ -18,4 +18,4 @@ The final phase involves using the fitted models to forecast future values based
 - **KPSS (Kwiatkowski-Phillips-Schmidt-Shin) Test**: A complementary test to confirm the stationarity of the series.
 - **Autocorrelation of Residuals**: To verify that the residuals (errors) of our model are not autocorrelated, indicating a good fit.
 
-
+## More detailed explanations are present in the report ** Time_serie_ENSAE_2A.pdf **
